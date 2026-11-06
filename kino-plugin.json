@@ -1,0 +1,66 @@
+{
+  "id": "hdfull",
+  "name": "HDFull",
+  "version": "1.0.0",
+  "apiVersion": 20,
+  "entry": "plugin.js",
+  "icon": "icon.png",
+  "hosts": [
+    "www3.hdfull.one",
+    "hdfull.one"
+  ],
+  "browser": "pages",
+  "visualBrowser": true,
+  "capabilities": [
+    "search",
+    "home",
+    "browse",
+    "episodes",
+    "resolve"
+  ],
+  "settings": [
+    {
+      "key": "hdfullCookies",
+      "type": "password",
+      "label": "Sesión de HDFull",
+      "labelEn": "HDFull session",
+      "hint": "Se guarda automáticamente al iniciar sesión en el navegador.",
+      "sync": false,
+      "hintEn": "Saved automatically after signing in with the visual browser."
+    }
+  ],
+  "theme": {
+    "accent": "#D12B33",
+    "onAccent": "#FFFFFF",
+    "background": "#111111",
+    "surface": "#1C1C1C",
+    "highlight": "#FF6B6B"
+  },
+  "description": "HDFull para Kino. Inicia sesión en el navegador visual para acceder a tu cuenta.",
+  "homepage": "https://www3.hdfull.one/login",
+  "repo": "JuanDEVYT/HDFull_plugin",
+  "consent": "Abrirá un navegador visible para que inicies sesión en HDFull. Las cookies de sesión se guardan cifradas en tu dispositivo.",
+  "enhancements": {
+    "21": {
+      "capabilities": [
+        "screen"
+      ],
+      "screen": {
+        "label": "HDFull",
+        "labelEn": "HDFull",
+        "icon": "movie",
+        "menuOpens": "screen",
+        "opensFrom": [
+          "menu",
+          "settings"
+        ],
+        "settingsButton": {
+          "label": "Abrir HDFull",
+          "labelEn": "Open HDFull"
+        },
+        "settingsIn": "screen"
+      },
+      "visualBrowser": true
+    }
+  }
+}
