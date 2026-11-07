@@ -1,927 +1,263 @@
 // src/browse/model.js
-var TAB_IDS = ["inicio", "peliculas", "series", "animacion"];
-var MAX_SLIDES = 6;
-var MAX_RAILS = 8;
-var MAX_RAIL_ITEMS = 24;
-var MAX_SLIDE_TEXT = 160;
-var HTTPS = /^https?:\/\//;
-function cardOf(item) {
-  if (!item) return null;
-  const out = {
-    id: `${item.kind || "movie"}-${item.id}`,
-    ref: item.ref,
-    title: item.title,
-    kind: item.kind || "movie"
+var TAB_IDS = ["inicio", "peliculas", "series"];
+function cardOf(x) {
+  if (!x) return null;
+  const ref = x.ref || x.url || x.id || "";
+  const title = String(x.title || "").trim();
+  const kind = x.kind === "series" || ref.includes("/serie/") ? "series" : "movie";
+  return {
+    id: x.id || ref,
+    ref,
+    title,
+    kind,
+    poster: x.poster || x.art || "",
+    backdrop: x.backdrop || x.art || x.poster || "",
+    year: x.year,
+    overview: x.overview || ""
   };
-  const poster = item.poster || item.art || item.logo;
-  if (poster && HTTPS.test(poster)) out.poster = poster;
-  if (item.backdrop && HTTPS.test(item.backdrop)) out.backdrop = item.backdrop;
-  if (item.rating !== void 0) out.rating = item.rating;
-  if (item.year !== void 0) out.year = item.year;
-  if (item.badges && Array.isArray(item.badges)) out.badges = item.badges.slice(0, 3);
-  return out;
-}
-function slidesOf(raw) {
-  if (!Array.isArray(raw)) return [];
-  const out = [];
-  for (const it of raw) {
-    if (!it || typeof it !== "object") continue;
-    const img = it.backdrop || it.image || it.poster || it.art;
-    if (!img || !HTTPS.test(img)) continue;
-    if (!it.ref || typeof it.ref !== "string") continue;
-    const title = typeof it.title === "string" ? it.title : "";
-    const rawTxt = typeof it.text === "string" ? it.text : typeof it.overview === "string" ? it.overview : "";
-    const text = rawTxt.length > MAX_SLIDE_TEXT ? rawTxt.slice(0, MAX_SLIDE_TEXT - 1).trim() + "\u2026" : rawTxt;
-    const s = {
-      id: `${it.kind || "movie"}-${it.id || title}`,
-      ref: it.ref,
-      kind: it.kind || "movie",
-      title,
-      image: img,
-      text
-    };
-    if (it.logo && HTTPS.test(it.logo)) s.logo = it.logo;
-    out.push(s);
-    if (out.length >= MAX_SLIDES) break;
-  }
-  return out;
-}
-function railsOf(raw) {
-  if (!Array.isArray(raw)) return [];
-  const out = [];
-  for (const row of raw) {
-    if (!row || typeof row !== "object") continue;
-    const itemsRaw = Array.isArray(row.items) ? row.items : [];
-    const items = itemsRaw.map(cardOf).filter(Boolean).slice(0, MAX_RAIL_ITEMS);
-    if (items.length === 0) continue;
-    out.push({
-      id: String(row.id || row.ref || out.length),
-      title: String(row.title || ""),
-      ref: typeof row.ref === "string" ? row.ref : void 0,
-      items
-    });
-    if (out.length >= MAX_RAILS) break;
-  }
-  return out;
 }
 function tabOf(page) {
-  if (!page || typeof page !== "object") return null;
-  const rows = Array.isArray(page.rows) ? page.rows : [];
-  const explicitSlides = Array.isArray(page.slides) ? page.slides : [];
-  let slides = slidesOf(explicitSlides);
-  let rails = railsOf(rows);
-  if (slides.length === 0 && rails.length > 0) {
-    const first = rails[0];
-    const rest = rails.slice(1);
-    const promoted = first.items.filter((i) => i.backdrop || i.poster).slice(0, MAX_SLIDES);
-    if (promoted.length > 0) {
-      slides = slidesOf(promoted.map((c) => ({ ...c, image: c.backdrop || c.poster })));
-      rails = rest;
+  if (!page || !Array.isArray(page.rows)) return null;
+  const rails = [];
+  const slides = [];
+  for (const r of page.rows) {
+    const items = (Array.isArray(r.items) ? r.items : []).map(cardOf).filter(Boolean);
+    if (!items.length) continue;
+    rails.push({
+      id: r.id || r.ref || "rail",
+      title: r.title || "Destacados",
+      items
+    });
+    if (!slides.length && items.length) {
+      slides.push(items[0]);
     }
   }
   return { slides, rails };
 }
-function playedKey(ref) {
-  const r = String(ref || "");
-  const m = /\/(?:pelicula|serie|episodio)\/([^\/\?#]+)/.exec(r) || /hdfull\.autos\/[^\/]+\/([^\/\?#]+)/.exec(r);
-  return m ? m[1] : "";
-}
-function recentOf(keys, loadedTabs) {
-  if (!Array.isArray(keys) || keys.length === 0) return [];
-  const pool = /* @__PURE__ */ new Map();
-  for (const tab of loadedTabs) {
-    if (!tab) continue;
-    for (const r of tab.rails) {
-      for (const c of r.items) {
-        const k = playedKey(c.ref);
-        if (k && !pool.has(k)) pool.set(k, c);
-      }
-    }
-    for (const s of tab.slides) {
-      const k = playedKey(s.ref);
-      if (k && !pool.has(k)) {
-        pool.set(k, {
-          id: s.id,
-          ref: s.ref,
-          kind: s.kind,
-          title: s.title,
-          poster: s.image,
-          backdrop: s.image
-        });
-      }
-    }
-  }
-  const out = [];
-  for (const k of keys) {
-    const hit = pool.get(k);
-    if (hit) out.push(hit);
-  }
-  return out;
-}
-
-// src/browse/words.js
-var WORDS_RAW = {
-  appName: ["HDFull", "HDFull"],
-  tabHome: ["Inicio", "Home"],
-  tabMovies: ["Pel\xEDculas", "Movies"],
-  tabSeries: ["Series", "Series"],
-  tabAnime: ["Animaci\xF3n", "Animation"],
-  recentRail: ["Continuar viendo", "Continue Watching"],
-  emptyTitle: ["Sin contenido todav\xEDa", "No content yet"],
-  emptySub: ["Vuelve a intentarlo en unos instantes.", "Try again in a few moments."],
-  failedTitle: ["No se pudo cargar", "Could not load"],
-  failedSub: ["Comprueba la conexi\xF3n e int\xE9ntalo de nuevo.", "Check your connection and try again."],
-  btnRetry: ["Reintentar", "Retry"],
-  btnSearch: ["Buscar", "Search"],
-  btnSettings: ["Ajustes", "Settings"],
-  brSearchTitle: ["Buscar en HDFull", "Search HDFull"],
-  brSearchHint: ["Pel\xEDcula, serie o t\xEDtulo...", "Movie, series or title..."],
-  brRecentSearches: ["B\xFAsquedas recientes", "Recent searches"],
-  brNoResults: ["Sin resultados para esta b\xFAsqueda.", "No results for this search."],
-  brSearching: ["Buscando en HDFull...", "Searching HDFull..."],
-  brTypeToSearch: ["Escribe un t\xEDtulo para empezar a buscar.", "Type a title to start searching."],
-  setLangTitle: ["Idioma de audio preferido", "Preferred Audio Language"],
-  setLangDesc: ["Prioridad al seleccionar servidores de reproducci\xF3n autom\xE1tica.", "Priority when selecting auto-play servers."],
-  setLangLatino: ["Espa\xF1ol Latino", "Latin Spanish"],
-  setLangCastellano: ["Castellano (Espa\xF1a)", "Castilian (Spain)"],
-  setLangSub: ["Subtitulado", "Subtitled"],
-  aboutTitle: ["Acerca de HDFull", "About HDFull"],
-  aboutDesc: ["Cat\xE1logo y reproducci\xF3n de Devoracine para Kino.", "Official HD catalog and playback plugin for Kino."],
-  aboutAuthor: ["Creado por JuandreXter", "Created by JuandreXter"],
-  aboutVersion: ["Versi\xF3n 1.2.0", "Version 1.2.0"],
-  watchNow: ["Reproducir", "Play"],
-  moreInfo: ["Ver detalles", "More details"],
-  brWatch: ["Reproducir", "Play"],
-  brInfo: ["Ver detalles", "Details"],
-  brSettings: ["Ajustes", "Settings"],
-  brClose: ["Cerrar", "Close"],
-  brSearch: ["Buscar", "Search"],
-  brRecent: ["Continuar viendo", "Continue watching"],
-  brEmpty: ["No hay contenido disponible.", "No content available."],
-  brFailed: ["No se pudo cargar el contenido.", "Could not load content."],
-  brRetry: ["Reintentar", "Retry"]
-};
-var WORDS = Object.fromEntries(
-  Object.entries(WORDS_RAW).map(([k, [es, en]]) => [
-    k,
-    { id: k, es, en, text: es, textEn: en }
-  ])
-);
-function both(key, vars = {}) {
-  const w = WORDS[key] || { id: key, es: key, en: key };
-  let es = w.es;
-  let en = w.en;
-  for (const [k, v] of Object.entries(vars)) {
-    es = es.replaceAll(`{${k}}`, v);
-    en = en.replaceAll(`{${k}}`, v);
-  }
-  return { id: w.id, es, en, text: es, textEn: en };
-}
 
 // src/browse/logo.js
-var LOGO_ASPECT = "1:1";
 var LOGO_DATA = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAMAAAADACAMAAABlApw1AAABZVBMVEVMaXESEhISEhIPDw8SEhISEhISEhISEhISEhISEhIPDw8QEBAUFBQcHBwSEhIREREAAAAREREREREREREREREQEBAZGRkRERESEhISEhIRERESEhIRERESEhIPDw8QEBAREREPDw8SEhISEhISEhIRERERERESEhIRERESEhIQEBARERERERESEhISEhIRERESEhIAAAAPDw8RERERERERERESEhISEhISEhISEhITExMQEBASEhISEhISEhISEhISEhISEhIRERESEhITExMSEhISEhIRERERERETExMSEhIREREREREREREPDw8SEhITExMSEhIRERERERERERERERERERESEhIRERERERERERESEhISEhISEhIRERERERERERESEhIAAAAXFxcUFBQNDQ0ODg4SEhIRERESEhISEhIQEBARERERERESEhISEhIRERERERERERERERESEhLlCRT///8IwVn6AAAAdHRSTlMAs/gw/N22+f79ID4zCe6RB+WizOY/CoCMDuf7Hu0xL/YhiOA4jo/QaH099y1U7OhRBhDkkyzr8LLvTy5SldHStM/YwUA3wtlmNXy+ZQ8iqjTOza7xkDypHSutuJm3y8rjNgULMhMjHHd+eR+BZ296v9fWvVHVmbwAAAAJcEhZcwAACxMAAAsTAQCanBgAAAL8SURBVHja7d1nU1pRGATgg9RLkS4IFkSxgLEba4zGrum9997LG39/CEElSCcOZye7X+STs8/MFe5c9axSldKxMZyyrVjb7dKC2NutK7bUp3CHajADka2WFD8BWY9s1t/+7ttt0Sj9ydd11e8NWESzGKZnNdd3PxItY+upqf6U1yKaxgi8qt7/zLhonNhylfo+r2iegKdS/75ron2CzvL9Z6cFIDFzuf7hOYHIgqtM/4yAJFFSMNouMLlZ4irqCwlQ/Cd+kn3XBSpBXxHgnIDFW/T5K3CZKOzfGcIDjE8hX0C/c6vg/tmCCLAcv5c+EMiYDvv3ODAB4s4DboD2lyv5z2ADFWB8yAHeCWy+5AAXcAHbuedXApzdLOAjMmAkC9hCBuxnn9+2IQPaPGpDoONSw9iAi2oQGxBVNmyASZ3HBgypfmyAVXVjA84qOzagTQl4CCCAAAIIIIAAAk4X8LOFIYAAAggggAACCCCAAAIIIIAAAv5nwOkRtXkuRAABBBBAAAEEEEAAAQQQQAABBBBAAAEEEEAAAQQQQAABBBBAAAEEEEAAAQTwL7YIIIAAAggggAACCCCAAAIIIIAAzf+LSXi6DQEEEEAAAQQQAAqAPzQY/thm+IOz4Y8uhz88Hv74fvgBhTA2IA0+IpLJDp2uIwN+ZHdoIsiAvSxgs+nvcpBPI6/kHyySNT0mdXD0pf5XzeV7bg1rBBfwPgdwGqgAo+vPJNx9VMCd/Caf2YEJcLw8nEW0YQLmj3YpeyyIgPjS8TToDCIgVTgu68cDxC4VzuMuwwEci38PFM+g3UoMFk9cB7Hu4h5PFo90O/1I/ae7Ts6kzwLNvM/1lhqqdyVQ+iduq5IZGMPov5BWZXLvKUL/UK8qGyfAe9GTLlUhz5O6z10/nFSVMxHSub5/UVXNi2Rc1/pxb6eqJeZVLa8jx/ySqjWjAYtu9Q3TVVVP3nwe0qn+t8hlVXd2R75q8dw0s7/nVg3G49qJrq5Zu1vym0D7mHXNFN1JeypW/AW5ZhKkywsGngAAAABJRU5ErkJggg==";
 
 // src/browse/view.js
-var TAB_KEYS = {
-  inicio: "tabHome",
-  peliculas: "tabMovies",
-  series: "tabSeries",
-  animacion: "tabAnime",
-  anime: "tabAnime"
-};
-var POLL_MS = 1500;
-var SEARCH_CAP = 60;
-var twin = (key, field = "text", vars) => {
-  const w = both(key, vars);
-  return { [field]: w.es, [field + "En"]: w.en };
-};
-var logo = () => ({
-  type: "Image",
-  key: "logo",
-  url: LOGO_DATA,
-  aspect: LOGO_ASPECT,
-  fit: "contain",
-  h: 40,
-  alt: "HDFull",
-  altEn: "HDFull",
-  fallback: { type: "Text", text: "HDFull", textEn: "HDFull", style: "h4" }
-});
-var tabBar = (active) => ({
-  type: "TabBar",
-  key: "tabs",
-  divider: false,
-  value: active,
-  onChanged: "tab",
-  tabs: TAB_IDS.map((id) => ({ value: id, ...twin(TAB_KEYS[id], "label") }))
-});
-var railSkeleton = (n) => ({
-  type: "Column",
-  key: "skel" + n,
-  gap: 8,
-  children: [
-    { type: "Skeleton", shape: "line" },
-    { type: "Row", gap: 12, sizes: ["compact"], children: [1, 2, 3].map((i) => ({ type: "Skeleton", shape: "card", key: `sk${n}c${i}`, flex: 1 })) },
-    { type: "Row", gap: 12, sizes: ["medium", "expanded"], children: [1, 2, 3, 4, 5, 6].map((i) => ({ type: "Skeleton", shape: "card", key: `sk${n}w${i}`, flex: 1 })) }
-  ]
-});
-var gridSkeleton = () => ({
-  type: "Column",
-  key: "gridSkeleton",
-  gap: 12,
-  children: [
-    ...[1, 2].map((r) => ({ type: "Row", gap: 12, sizes: ["compact"], key: `gc${r}`, children: [1, 2, 3].map((i) => ({ type: "Skeleton", shape: "card", key: `gc${r}-${i}`, flex: 1 })) })),
-    ...[1, 2].map((r) => ({ type: "Row", gap: 12, sizes: ["medium", "expanded"], key: `gw${r}`, children: [1, 2, 3, 4, 5, 6].map((i) => ({ type: "Skeleton", shape: "card", key: `gw${r}-${i}`, flex: 1 })) }))
-  ]
-});
-var heroSkeleton = () => ({
-  type: "Skeleton",
-  key: "heroSkeleton",
-  shape: "block",
-  height: { compact: 200, expanded: 320 }
-});
-var slideNode = (s) => ({
-  type: "heroCard",
-  key: "slide-" + s.id,
-  h: { compact: 200, expanded: 240 },
-  title: s.title,
-  text: s.text,
-  image: s.image,
-  ...s.logo ? { logo: s.logo } : {},
-  buttons: [
-    {
-      type: "ElevatedButton",
-      key: "watch-" + s.id,
-      ...twin("brWatch", "labelText"),
-      icon: "play",
-      onPressed: { go: { play: { ref: s.ref, kind: s.kind, id: s.id, title: s.title } } }
+function renderView({ state = {}, device = "tv", focusId, route }) {
+  const currentTab = state.tab || "inicio";
+  const navItems = [
+    { id: "tab-inicio", label: "Inicio", icon: "home", selected: currentTab === "inicio" },
+    { id: "tab-peliculas", label: "Pel\xEDculas", icon: "movie", selected: currentTab === "peliculas" },
+    { id: "tab-series", label: "Series", icon: "tv", selected: currentTab === "series" }
+  ];
+  const appBar = {
+    type: "AppBar",
+    title: "HDFull",
+    leading: {
+      type: "Image",
+      src: LOGO_DATA,
+      width: 32,
+      height: 32
     },
-    {
-      type: "TextButton",
-      key: "info-" + s.id,
-      ...twin("brInfo", "labelText"),
-      onPressed: { go: { title: { ref: s.ref, kind: s.kind, id: s.id, title: s.title } } }
-    }
-  ]
-});
-var hero = (slides) => slides.length === 1 ? slideNode(slides[0]) : {
-  type: "PageView",
-  key: "hero" + slides.length,
-  autoPlayMs: 6e3,
-  children: slides.map(slideNode)
-};
-var rail = (r, key, titleOverride, size = "medium") => ({
-  type: "titleRail",
-  key,
-  ...titleOverride || { title: r.title },
-  ...r.ref ? { ref: r.ref } : {},
-  items: r.items,
-  size
-});
-function browseView({ tab, data, recent, pending, failed, device = "phone" }) {
-  const tv = device === "tv";
-  const gear = {
-    type: "IconButton",
-    key: "settingsButton",
-    icon: "settings",
-    ...twin("brSettings", "labelText"),
-    ...twin("brSettings", "tooltip"),
-    onPressed: { event: "go", arg: "settings" }
-  };
-  const active = TAB_IDS.includes(tab) ? tab : TAB_IDS[0];
-  const body = [];
-  if (data) {
-    if (data.slides.length > 0) body.push(hero(data.slides));
-    else if (pending) body.push(heroSkeleton());
-    if (recent && recent.length > 0) body.push(rail({ items: recent }, "recent", twin("brRecent", "title"), tv ? "small" : "medium"));
-    for (const r of data.rails) {
-      body.push(rail(r, "rail-" + String(r.id).replace(/[^A-Za-z0-9_-]/g, "_"), null, tv ? "small" : "medium"));
-    }
-    if (data.rails.length === 0) {
-      body.push({ type: "Text", ...twin("brEmpty", "text"), color: "muted" });
-    }
-  } else if (failed) {
-    body.push({
-      type: "MaterialBanner",
-      key: "loadFailed",
-      role: "error",
-      ...twin("brFailed"),
-      action: { ...twin("brRetry", "label"), onTap: "retry" }
-    });
-  } else {
-    body.push(heroSkeleton(), railSkeleton(1), railSkeleton(2), railSkeleton(3));
-  }
-  return {
-    type: "Scaffold",
-    appBar: {
-      type: "AppBar",
-      mergeWithKinoBar: true,
-      dense: true,
-      divider: false,
-      leading: {
+    actions: [
+      {
         type: "IconButton",
-        key: "close",
-        icon: "close",
-        ...twin("brClose", "labelText"),
-        ...twin("brClose", "tooltip"),
-        onPressed: { go: { close: true } }
-      },
-      actions: tv ? [
-        {
-          type: "IconButton",
-          key: "searchButton",
-          icon: "search",
-          ...twin("brSearch", "labelText"),
-          ...twin("brSearch", "tooltip"),
-          onPressed: "openSearch"
-        },
-        gear
-      ] : [gear],
-      title: tv ? {
-        type: "Row",
-        key: "titleRow",
-        gap: 24,
-        crossAxisAlignment: "center",
-        children: [logo(), tabBar(active)]
-      } : logo()
-    },
-    ...tv ? {} : {
-      floatingActionButton: {
-        type: "FloatingActionButton",
-        key: "searchFab",
-        icon: "search",
-        ...twin("brSearch", "tooltip"),
-        onPressed: "openSearch"
+        icon: "refresh",
+        tooltip: "Volver a iniciar sesi\xF3n o actualizar cookies",
+        onPressed: { event: "hdfull.login" }
       }
-    },
-    body: {
-      type: "Column",
-      key: "page",
-      children: [
-        ...tv ? [] : [
-          {
-            type: "Column",
-            key: "tabsRow",
-            padding: { compact: 0, expanded: 24 },
-            children: [tabBar(active)]
-          }
-        ],
-        {
-          type: "SingleChildScrollView",
-          key: "browse-" + active,
-          flex: 1,
+    ]
+  };
+  const body = [];
+  body.push({
+    type: "Row",
+    padding: { top: 8, bottom: 16, left: 16, right: 16 },
+    gap: 12,
+    children: navItems.map((item) => ({
+      type: "FilterChip",
+      id: item.id,
+      label: item.label,
+      selected: item.selected,
+      leading: { type: "Icon", name: item.icon, size: 18 },
+      onPressed: { event: "nav.tab", tab: item.id.replace("tab-", "") }
+    }))
+  });
+  const tabData = state.tabs?.[currentTab] || { slides: [], rails: [] };
+  if (!tabData.slides?.length && !tabData.rails?.length) {
+    if (state.pending?.includes(currentTab)) {
+      body.push({
+        type: "Center",
+        padding: 48,
+        child: {
+          type: "Column",
+          crossAxisAlignment: "center",
+          gap: 16,
           children: [
+            { type: "CircularProgressIndicator", size: 36 },
+            { type: "Text", text: "Cargando cat\xE1logo de HDFull...", color: "muted" }
+          ]
+        }
+      });
+    } else {
+      body.push({
+        type: "Center",
+        padding: 48,
+        child: {
+          type: "Column",
+          crossAxisAlignment: "center",
+          gap: 16,
+          children: [
+            { type: "Icon", name: "lock_clock", size: 48, color: "warning" },
+            { type: "Text", text: "Sesi\xF3n de Cloudflare o HDFull expirada", style: "h2" },
             {
-              type: "Column",
-              padding: { compact: 12, expanded: 24 },
-              gap: 16,
-              children: body
+              type: "Text",
+              text: "Cloudflare o HDFull requieren renovar las cookies seguras para acceder al cat\xE1logo.",
+              color: "muted",
+              textAlign: "center"
+            },
+            {
+              type: "Button",
+              label: "Renovar sesi\xF3n en el navegador",
+              onPressed: { event: "hdfull.login" },
+              autofocus: true
             }
           ]
         }
-      ]
-    },
-    ...pending ? { every: { ms: POLL_MS, event: "tick" } } : {}
-  };
-}
-function settingsView() {
-  return {
-    type: "Scaffold",
-    appBar: {
-      type: "AppBar",
-      mergeWithKinoBar: true,
-      dense: true,
-      divider: false,
-      leading: {
-        type: "IconButton",
-        key: "back",
-        icon: "arrow_back",
-        ...twin("brBack", "labelText"),
-        ...twin("brBack", "tooltip"),
-        onPressed: "back"
-      },
-      title: logo()
-    },
-    body: {
-      type: "SingleChildScrollView",
-      key: "settings-page",
-      children: [
-        {
-          type: "Column",
-          padding: { compact: 12, expanded: 24 },
-          gap: 16,
-          children: [{ type: "settings", key: "form" }]
-        }
-      ]
-    }
-  };
-}
-function searchView({ query, status, items, history = [], device = "phone" }) {
-  const tv = device === "tv";
-  const searchForm = () => ({
-    type: "Form",
-    key: "searchForm",
-    onSubmitted: "search",
-    gap: 8,
-    children: tv ? [
-      {
-        type: "Row",
-        key: "searchRow",
-        gap: 16,
-        crossAxisAlignment: "center",
-        children: [
-          {
-            type: "TextField",
-            key: "q",
-            kind: "text",
-            value: query,
-            ...twin("brSearchHint", "labelText"),
-            maxLength: 100,
-            autofocus: true,
-            weight: 1
-          },
-          {
-            type: "ElevatedButton",
-            key: "searchGo",
-            ...twin("brSearch", "labelText"),
-            icon: "search",
-            submit: true
-          }
-        ]
-      }
-    ] : [
-      {
-        type: "TextField",
-        key: "q",
-        kind: "text",
-        value: query,
-        ...twin("brSearchHint", "labelText"),
-        maxLength: 100,
-        autofocus: true
-      },
-      {
-        type: "ElevatedButton",
-        key: "searchGo",
-        ...twin("brSearch", "labelText"),
-        icon: "search",
-        submit: true
-      }
-    ]
-  });
-  const body = tv ? [] : [searchForm()];
-  if (status === "fail") {
-    body.push({
-      type: "MaterialBanner",
-      key: "searchFailed",
-      role: "error",
-      ...twin("brSearchFailed"),
-      action: { ...twin("brRetry", "label"), onTap: "sretry" }
-    });
-  } else if (status === "done" && items) {
-    if (items.length === 0) {
-      body.push({ type: "Text", ...twin("brNoResults", "text"), color: "muted" });
-    } else {
-      body.push({
-        type: "titleGrid",
-        key: "results",
-        columns: { compact: 3, expanded: 6 },
-        items: items.slice(0, SEARCH_CAP)
       });
     }
-  } else if (status !== "idle") {
-    body.push(gridSkeleton());
-  } else if (history && history.length > 0) {
-    body.push({ type: "Text", ...twin("brSearchedBefore", "text"), style: "h4" });
+    return {
+      type: "Scaffold",
+      appBar,
+      body: {
+        type: "SingleChildScrollView",
+        children: body
+      }
+    };
+  }
+  const hero = tabData.slides[0];
+  if (hero) {
     body.push({
-      type: "titleGrid",
-      key: "history",
-      columns: { compact: 3, expanded: 6 },
-      items: history.slice(0, SEARCH_CAP)
+      type: "HeroCard",
+      id: hero.id,
+      title: hero.title,
+      backdrop: hero.backdrop || hero.poster,
+      poster: hero.poster,
+      overview: hero.overview,
+      year: hero.year,
+      action: {
+        id: `play-${hero.id}`,
+        label: "Reproducir",
+        icon: "play_arrow",
+        action: { event: "play", ref: hero.ref, id: hero.id }
+      },
+      secondaryAction: {
+        id: `info-${hero.id}`,
+        label: "Detalles",
+        icon: "info",
+        action: { event: "details", ref: hero.ref, id: hero.id }
+      }
+    });
+  }
+  for (const rail of tabData.rails) {
+    if (!rail.items?.length) continue;
+    body.push({
+      type: "TitleRail",
+      id: `rail-${rail.id}`,
+      title: rail.title,
+      items: rail.items.map((card) => ({
+        id: card.id,
+        title: card.title,
+        poster: card.poster,
+        year: card.year,
+        kind: card.kind,
+        action: { event: "details", ref: card.ref, id: card.id }
+      }))
     });
   }
   return {
     type: "Scaffold",
-    appBar: {
-      type: "AppBar",
-      mergeWithKinoBar: true,
-      dense: true,
-      divider: false,
-      leading: {
-        type: "IconButton",
-        key: "back",
-        icon: "arrow_back",
-        ...twin("brBack", "labelText"),
-        ...twin("brBack", "tooltip"),
-        onPressed: "back"
-      },
-      ...tv ? { title: searchForm() } : twin("brSearchTitle", "title")
-    },
+    appBar,
     body: {
       type: "SingleChildScrollView",
-      key: "search-page",
-      children: [
-        {
-          type: "Column",
-          padding: { compact: 12, expanded: 24 },
-          gap: 16,
-          children: body
-        }
-      ]
-    },
-    ...status === "loading" ? { every: { ms: 1e3, event: "stick" } } : {}
-  };
-}
-
-// src/browse/metaCache.js
-var KEY = "hdfull_meta1";
-var MAX = 260;
-var CONCURRENCY = 3;
-var HTTPS2 = /^https?:\/\//;
-function makeMetaCache({ kino: kino2, clock = { now: () => Date.now() } }) {
-  const usable = () => {
-    try {
-      return typeof kino2.meta === "function" && kino2.meta.byTitle === true;
-    } catch (_) {
-      return false;
+      children: body
     }
   };
-  let book = null;
-  function read() {
-    if (book) return book;
-    try {
-      const o = JSON.parse(kino2.storage.get(KEY) || "null");
-      book = o && typeof o === "object" && !Array.isArray(o) ? o : {};
-    } catch (_) {
-      book = {};
-    }
-    return book;
-  }
-  function write() {
-    try {
-      const ids = Object.keys(book);
-      if (ids.length > MAX) {
-        for (const id of ids.slice(0, ids.length - MAX)) delete book[id];
-      }
-      kino2.storage.set(KEY, JSON.stringify(book));
-    } catch (_) {
-    }
-  }
-  function known(id) {
-    const e = read()[id];
-    if (!e) return {};
-    return {
-      ...e.t > 0 ? { tmdb: e.t } : {},
-      ...e.l && HTTPS2.test(e.l) ? { logo: e.l } : {},
-      ...e.b && HTTPS2.test(e.b) ? { backdrop: e.b } : {},
-      ...e.o ? { overview: e.o } : {}
-    };
-  }
-  const asked = (id) => Object.hasOwn(read(), id);
-  function dress(cards) {
-    return cards.map((c) => {
-      const k = known(c.id);
-      const withId = k.tmdb && !(c.ids && c.ids.tmdb) ? { ...c, ids: { ...c.ids || {}, tmdb: k.tmdb } } : c;
-      const withBackdrop = k.backdrop && !withId.backdrop ? { ...withId, backdrop: k.backdrop } : withId;
-      return k.logo && !withBackdrop.logo ? { ...withBackdrop, logo: k.logo } : withBackdrop;
-    });
-  }
-  async function fill(cards, budgetMs) {
-    if (!usable()) return 0;
-    const start = clock.now();
-    let count = 0;
-    const pending = cards.filter((c) => !asked(c.id));
-    for (let i = 0; i < pending.length; i += CONCURRENCY) {
-      if (clock.now() - start >= budgetMs) break;
-      const slice = pending.slice(i, i + CONCURRENCY);
-      await Promise.all(
-        slice.map(async (c) => {
-          try {
-            const type = c.kind === "series" ? "series" : "movie";
-            const yearNum = c.year ? parseInt(c.year, 10) : void 0;
-            const res = await kino2.meta({
-              type,
-              title: c.title,
-              ...yearNum && yearNum > 1900 ? { year: yearNum } : {}
-            });
-            count++;
-            if (!res) {
-              read()[c.id] = { t: 0, l: "" };
-            } else {
-              const tmdbId = res.ids && res.ids.tmdb || res.id || 0;
-              read()[c.id] = {
-                t: tmdbId,
-                l: res.logo || "",
-                b: res.backdrop || "",
-                o: res.overview || ""
-              };
-            }
-          } catch (_) {
-          }
-        })
-      );
-    }
-    if (count > 0) write();
-    return count;
-  }
-  return { usable, known, asked, dress, fill };
 }
 
 // src/browse/index.js
-var TAB_KEY = "hdfull_browseTab";
-var SNAP_PREFIX = "hdfull_browse1:";
-var SNAP_TTL_MS = 12 * 3600 * 1e3;
-var SNAP_MAX = 24 * 1024;
-var RECENT_KEY = "hdfull_recent1";
-var RECENT_MAX = 16;
-var HIST_KEY = "hdfull_searchHist1";
-var HIST_MAX = 24;
-var MAX_META_TICKS = 30;
-var MAX_LOAD_TRIES = 3;
-function metaAsk(c) {
-  const title = String(c.title).replace(/\s*[([][^)\]]*[)\]]/g, "").replace(/\s+/g, " ").trim() || String(c.title);
-  const y = /\((19|20)\d{2}\)/.exec(String(c.title));
-  return { id: c.id, title, kind: c.kind, ...y ? { year: parseInt(y[0].slice(1, 5), 10) } : {} };
-}
+var TAB_KEY = "hdfull_tab";
 function makeBrowse({ kino: kino2, loadTab: loadTab2, searchTitles }) {
-  const meta = makeMetaCache({ kino: kino2 });
-  const slidesFrom = (rails) => {
-    const out = [];
-    for (const r of rails) {
-      for (const c of r.items) {
-        if (out.length >= 6) return out;
-        const k = meta.known(c.id);
-        const img = k.backdrop || c.poster;
-        if (!img || out.some((s) => s.id === c.id)) continue;
-        out.push({
-          id: c.id,
-          ref: c.ref,
-          kind: c.kind,
-          title: c.title,
-          image: img,
-          text: k.overview || (c.badges ? c.badges.join(" \xB7 ") : ""),
-          ...k.logo ? { logo: k.logo } : {}
-        });
-      }
-    }
-    return out;
-  };
-  const uniform = (items) => items.every((i) => i.backdrop) ? items : items.map(({ backdrop, ...rest }) => rest);
-  const enrich = (data) => data ? {
-    slides: data.slides.length > 0 ? data.slides.map((s) => {
-      const k = meta.known(s.id);
-      return k.logo ? { ...s, logo: k.logo } : s;
-    }) : slidesFrom(data.rails),
-    rails: data.rails.map((r) => ({ ...r, items: uniform(meta.dress(r.items)) }))
-  } : data;
-  const metaTries = /* @__PURE__ */ new Map();
-  const memo = /* @__PURE__ */ new Map();
-  const log2 = (...a) => {
+  const cache = /* @__PURE__ */ new Map();
+  function getStoredTab() {
     try {
-      kino2.log("[HDFull]", ...a);
+      const t = kino2?.storage?.get(TAB_KEY);
+      return TAB_IDS.includes(t) ? t : "inicio";
     } catch (_) {
-    }
-  };
-  const get = (k) => {
-    try {
-      return kino2.storage.get(k);
-    } catch (_) {
-      return null;
-    }
-  };
-  const set = (k, v, opts) => {
-    try {
-      kino2.storage.set(k, v, opts);
-    } catch (_) {
-    }
-  };
-  function readSnap(tab) {
-    try {
-      const o = JSON.parse(get(SNAP_PREFIX + tab) || "null");
-      return o && Date.now() - o.at < SNAP_TTL_MS && o.data && Array.isArray(o.data.rails) ? o.data : null;
-    } catch (_) {
-      return null;
+      return "inicio";
     }
   }
-  function writeSnap(tab, data) {
-    for (let max = 20; max >= 6; max -= 2) {
-      try {
-        const slim = {
-          slides: data.slides.slice(0, 5),
-          rails: data.rails.map((r) => ({ ...r, items: r.items.slice(0, max) }))
-        };
-        const s = JSON.stringify({ at: Date.now(), data: slim });
-        if (s.length <= SNAP_MAX) {
-          set(SNAP_PREFIX + tab, s);
-          return;
-        }
-      } catch (_) {
-      }
-    }
-  }
-  function dataOf(tab) {
-    const m = memo.get(tab);
-    if (m) return m.data;
-    const s = readSnap(tab);
-    if (s) {
-      memo.set(tab, { data: s, whole: false });
-      return s;
-    }
-    return null;
-  }
-  const stored = () => {
-    const t = get(TAB_KEY);
-    return TAB_IDS.includes(t) ? t : null;
-  };
-  const remember = (tab) => {
-    set(TAB_KEY, tab);
-  };
-  function readKeys() {
+  function storeTab(t) {
     try {
-      const a = JSON.parse(get(RECENT_KEY) || "[]");
-      return Array.isArray(a) ? a.filter((k) => typeof k === "string") : [];
-    } catch (_) {
-      return [];
-    }
-  }
-  function notePlayed(ref) {
-    const k = playedKey(ref);
-    if (!k) return;
-    const prior = readKeys().filter((x) => x !== k);
-    try {
-      set(RECENT_KEY, JSON.stringify([k, ...prior].slice(0, RECENT_MAX)));
+      kino2?.storage?.set(TAB_KEY, t);
     } catch (_) {
     }
-  }
-  function readHistory() {
-    try {
-      const a = JSON.parse(get(HIST_KEY) || "[]");
-      return Array.isArray(a) ? a.filter((c) => c && typeof c.id === "string" && typeof c.ref === "string" && typeof c.title === "string").slice(0, HIST_MAX) : [];
-    } catch (_) {
-      return [];
-    }
-  }
-  function rememberFound(cards) {
-    try {
-      const fresh = cards.slice(0, 12).map((c) => ({
-        id: c.id,
-        ref: c.ref,
-        title: c.title,
-        kind: c.kind,
-        poster: c.poster,
-        year: c.year,
-        rating: c.rating
-      }));
-      const ids = new Set(fresh.map((c) => c.id));
-      set(HIST_KEY, JSON.stringify([...fresh, ...readHistory().filter((c) => !ids.has(c.id))].slice(0, HIST_MAX)));
-    } catch (_) {
-    }
-  }
-  let found = null;
-  const tabFromArgs = (route) => {
-    const a = route && route.args && typeof route.args === "object" ? route.args : {};
-    return TAB_IDS.includes(a.tab) ? a.tab : null;
-  };
-  function needed(tab, device) {
-    const order = [tab, ...TAB_IDS.filter((t) => t !== tab)];
-    return order.filter((t, i) => (i === 0 || device !== "tv") && !(memo.get(t) && memo.get(t).whole));
   }
   function view(ctx) {
-    const st = ctx.state && typeof ctx.state === "object" ? ctx.state : {};
-    if (ctx.route && ctx.route.name === "settings") return settingsView();
-    if (ctx.route && ctx.route.name === "search") {
-      const query = typeof st.sq === "string" ? st.sq : "";
-      const items = found && found.q === query ? found.items : null;
-      const status = query === "" ? "idle" : st.sstate === "fail" ? "fail" : items ? "done" : "loading";
-      return searchView({ query, status, items, history: query === "" ? readHistory() : [], device: ctx.device });
-    }
-    const tab = TAB_IDS.includes(st.tab) ? st.tab : tabFromArgs(ctx.route) ?? stored() ?? TAB_IDS[0];
-    const data = enrich(dataOf(tab));
-    const loaded = TAB_IDS.map((t) => memo.get(t)).filter(Boolean).map((m) => m.data);
-    const pending = Array.isArray(st.pending) && st.pending.length > 0;
-    return browseView({
-      tab,
-      data,
-      recent: uniform(meta.dress(recentOf(readKeys(), loaded))),
-      pending,
-      failed: !!(st.failed && st.failed[tab]),
-      device: ctx.device
+    const st = ctx?.state && typeof ctx.state === "object" ? ctx.state : {};
+    const tab = TAB_IDS.includes(st.tab) ? st.tab : getStoredTab();
+    const tabsData = {
+      inicio: cache.get("inicio") || { slides: [], rails: [] },
+      peliculas: cache.get("peliculas") || { slides: [], rails: [] },
+      series: cache.get("series") || { slides: [], rails: [] }
+    };
+    return renderView({
+      state: { ...st, tab, tabs: tabsData },
+      device: ctx?.device || "tv",
+      route: ctx?.route
     });
   }
   async function load(tab) {
-    const page = await loadTab2(tab);
-    const data = tabOf(page);
-    if (data) {
-      memo.set(tab, { data, whole: true });
-      writeSnap(tab, data);
+    try {
+      const page = await loadTab2(tab);
+      const data = tabOf(page);
+      if (data && (data.slides.length || data.rails.length)) {
+        cache.set(tab, data);
+        return true;
+      }
+    } catch (e) {
+      console.log(`[HDFull Browse] error cargando ${tab}:`, e.message);
     }
-    return data !== null;
+    return false;
   }
-  const loadTries = /* @__PURE__ */ new Map();
-  function failLoad(tab, rest, failed) {
-    const n = (loadTries.get(tab) || 0) + 1;
-    loadTries.set(tab, n);
-    if (n < MAX_LOAD_TRIES) rest.push(tab);
-    else {
-      failed[tab] = true;
-      loadTries.delete(tab);
-    }
-  }
-  const events = {
-    open({ route, state, device }) {
-      const tab = tabFromArgs(route) ?? (TAB_IDS.includes(state.tab) ? state.tab : stored() ?? TAB_IDS[0]);
-      for (const t of TAB_IDS) dataOf(t);
-      return { state: { tab, pending: needed(tab, device), failed: null } };
-    },
-    tab({ value, arg, state }) {
-      const tab = TAB_IDS.includes(value) ? value : TAB_IDS.includes(arg) ? arg : null;
-      if (!tab) return null;
-      remember(tab);
-      dataOf(tab);
-      const failed = { ...state.failed || {} };
-      delete failed[tab];
-      const pending = [tab, ...Array.isArray(state.pending) ? state.pending.filter((t) => t !== tab) : []];
-      return { state: { tab, pending: memo.get(tab) && memo.get(tab).whole ? pending.slice(1) : pending, failed } };
-    },
-    retry({ state, device }) {
-      const tab = TAB_IDS.includes(state.tab) ? state.tab : TAB_IDS[0];
-      return { state: { failed: null, pending: [tab, ...needed(tab, device).filter((t) => t !== tab)] } };
-    },
-    async tick({ state }) {
-      const pending = Array.isArray(state.pending) ? state.pending : [];
-      if (pending.length === 0) return null;
-      const [next, ...rest] = pending;
-      const failed = { ...state.failed || {} };
-      if (next.startsWith("meta:")) {
-        const tabId = next.slice(5);
-        const m = memo.get(tabId);
-        if (!m) return { state: { pending: rest } };
-        const cards = [
-          ...m.data.slides,
-          ...m.data.rails.flatMap((r) => r.items.slice(0, 6)),
-          ...m.data.rails.flatMap((r) => r.items.slice(6))
-        ];
-        const asked = await meta.fill(cards.map(metaAsk), 12e3);
-        const made = slidesFrom(m.data.rails);
-        if (made.length > m.data.slides.length) {
-          m.data = { ...m.data, slides: made.map(({ logo: logo2, ...rest2 }) => rest2) };
-          writeSnap(tabId, m.data);
-        }
-        const tries = (metaTries.get(tabId) || 0) + 1;
-        metaTries.set(tabId, tries);
-        if (asked > 0 && tries < MAX_META_TICKS && cards.some((c) => !meta.asked(c.id))) {
-          return { state: { pending: [next, ...rest] } };
-        }
-        return { state: { pending: rest } };
-      }
-      try {
-        const ok = await load(next);
-        if (!ok) failLoad(next, rest, failed);
-        else delete failed[next];
-        if (ok && meta.usable()) rest.unshift("meta:" + next);
-      } catch (e) {
-        log2("browse tab error", e && e.message || "error");
-        failLoad(next, rest, failed);
-      }
-      return { state: { pending: rest, failed } };
-    },
-    openSearch() {
-      return { route: { push: "search" }, state: { sq: "", sstate: null } };
-    },
-    search({ value, route }) {
-      const q = value && typeof value.q === "string" ? value.q.trim().slice(0, 100) : "";
-      if (q === "") return null;
-      const state = { sq: q, sstate: "loading" };
-      return route && route.name === "search" ? { state } : { route: { push: "search" }, state };
-    },
-    async stick({ state }) {
-      const q = typeof state.sq === "string" ? state.sq : "";
-      if (q === "" || state.sstate !== "loading") return null;
-      try {
-        const out = await searchTitles(q);
-        found = { q, items: (Array.isArray(out) ? out : []).slice(0, 60).map(cardOf) };
-        rememberFound(found.items);
-        return { state: { sstate: "done" } };
-      } catch (e) {
-        log2("browse search error", e && e.message || "error");
-        return { state: { sstate: "fail" } };
-      }
-    },
-    sretry({ state }) {
-      return typeof state.sq === "string" && state.sq !== "" ? { state: { sstate: "loading" } } : null;
-    },
-    go({ arg }) {
-      return arg === "settings" ? { route: { push: "settings" }, state: { fromBrowse: true } } : null;
-    },
-    back({ state, route }) {
-      if (route && route.name === "settings" && !state.fromBrowse) return { close: true };
-      return { route: { pop: true }, state: { sq: null, sstate: null } };
-    }
-  };
   async function event(ev) {
-    const handler = Object.hasOwn(events, ev.name) ? events[ev.name] : null;
-    return handler ? await handler({ ...ev, state: ev.state || {} }) ?? null : null;
+    const name = ev?.name;
+    const st = ev?.state && typeof ev.state === "object" ? ev.state : {};
+    const currentTab = TAB_IDS.includes(st.tab) ? st.tab : getStoredTab();
+    if (name === "open") {
+      const pending = [currentTab, ...TAB_IDS.filter((t) => t !== currentTab && !cache.has(t))];
+      return {
+        state: { tab: currentTab, pending },
+        view: view({ state: { tab: currentTab, pending }, device: ev.device })
+      };
+    }
+    if (name === "nav.tab") {
+      const target = TAB_IDS.includes(ev.tab) ? ev.tab : "inicio";
+      storeTab(target);
+      const pending = cache.has(target) ? [] : [target];
+      return {
+        state: { tab: target, pending },
+        view: view({ state: { tab: target, pending }, device: ev.device })
+      };
+    }
+    if (name === "tick") {
+      const pending = Array.isArray(st.pending) ? [...st.pending] : [];
+      if (!pending.length) return null;
+      const next = pending.shift();
+      await load(next);
+      return {
+        state: { ...st, pending },
+        view: view({ state: { ...st, pending }, device: ev.device })
+      };
+    }
+    return null;
   }
-  return { view, event, notePlayed };
+  return { view, event };
 }
 
 // src/hdfull.js
@@ -1109,7 +445,7 @@ async function resolveFallback(title) {
 }
 
 // src/plugin.js
-var VERSION = "1.0.2";
+var VERSION = "1.0.3";
 var PREFIX = `[HDFull v${VERSION}]`;
 var LOGIN_URL = `${BASE_URL}/login`;
 console.log(`${PREFIX} Creado por JuandreXter`);

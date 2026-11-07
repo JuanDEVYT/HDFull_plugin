@@ -2,7 +2,7 @@ import { makeBrowse } from './browse/index.js';
 import { BASE_URL, getSessionCookie, isAuthorized, fetchHtml, parseCards } from "./hdfull.js";
 import { resolveFallback } from "./fallback.js";
 
-const VERSION = "1.0.2";
+const VERSION = "1.0.3";
 const PREFIX = `[HDFull v${VERSION}]`;
 const LOGIN_URL = `${BASE_URL}/login`;
 
