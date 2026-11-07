@@ -1,67 +1,325 @@
-const VERSION = "1.0.0";
+import { BASE_URL, getSessionCookie, isAuthorized, fetchHtml, parseCards } from "./hdfull.js";
+import { resolveFallback } from "./fallback.js";
+
+const VERSION = "1.0.1";
 const PREFIX = `[HDFull v${VERSION}]`;
-const BASE = "https://www3.hdfull.one";
-const LOGIN = `${BASE}/login`;
+const LOGIN_URL = `${BASE_URL}/login`;
+
 console.log(`${PREFIX} Creado por JuandreXter`);
 const log = (...x) => console.log(PREFIX, ...x);
 
-function session() {
-  try { return String(kino?.config?.get?.("hdfullCookies") || "").trim(); } catch (_) { return ""; }
-}
-function signedIn() { return !!session(); }
 function msg(title, body, action) {
   const children = [
     { type: "Icon", name: "lock", size: 54, color: "error" },
     { type: "Text", text: title, style: "h1", textAlign: "center" },
     { type: "Text", text: body, textAlign: "center", color: "muted" },
   ];
-  if (action) children.push({ type: "Button", label: action.label, onPressed: { event: action.event }, autofocus: true });
+  if (action) {
+    children.push({
+      type: "Button",
+      label: action.label,
+      onPressed: { event: action.event },
+      autofocus: true,
+    });
+  }
   return {
     type: "Scaffold",
     appBar: { type: "AppBar", title: "HDFull" },
-    body: { type: "SingleChildScrollView", padding: 32, children: [{ type: "Column", mainAxisAlignment: "center", crossAxisAlignment: "center", gap: 24, children }] },
+    body: {
+      type: "SingleChildScrollView",
+      padding: 32,
+      children: [
+        {
+          type: "Column",
+          mainAxisAlignment: "center",
+          crossAxisAlignment: "center",
+          gap: 24,
+          children,
+        },
+      ],
+    },
   };
 }
+
 function loginView() {
-  return msg("Inicio de sesión requerido", "HDFull requiere una cuenta. Pulsa el botón, inicia sesión directamente en la ventana segura de HDFull y vuelve a Kino.", {label:"Abrir inicio de sesión",event:"hdfull.login"});
+  return msg(
+    "Inicio de sesión requerido",
+    "HDFull requiere una cuenta para acceder a sus enlaces. Pulsa el botón, inicia sesión en la ventana segura del navegador y al terminar pulsa Listo.",
+    { label: "Abrir inicio de sesión", event: "hdfull.login" }
+  );
 }
+
 function unavailableView() {
-  return msg("Navegador visual no disponible", "Actualiza Kino a la versión compatible con Navegador visual o abre HDFull desde un dispositivo móvil/tablet.");
+  return msg(
+    "Navegador visual no disponible",
+    "Este dispositivo no cuenta con WebView compatible para abrir el navegador visual de Kino."
+  );
 }
 
 export async function screen() {
   log("screen(): comprobando sesión");
-  if (!signedIn()) return loginView();
-  return msg("Sesión vinculada", "Tu sesión de HDFull está guardada. El catálogo se habilitará al confirmar que la web acepte la sesión.", {label:"Actualizar sesión",event:"hdfull.login"});
+  if (!isAuthorized()) return loginView();
+
+  return {
+    type: "Scaffold",
+    appBar: {
+      type: "AppBar",
+      title: "HDFull",
+    },
+    body: {
+      type: "SingleChildScrollView",
+      padding: 24,
+      children: [
+        {
+          type: "Column",
+          crossAxisAlignment: "center",
+          gap: 16,
+          children: [
+            { type: "Icon", name: "check_circle", size: 48, color: "success" },
+            { type: "Text", text: "Sesión activa en HDFull", style: "h2", textAlign: "center" },
+            {
+              type: "Text",
+              text: "Tu cuenta está vinculada. Ya puedes explorar el catálogo desde la pantalla principal de Kino o usar la búsqueda.",
+              textAlign: "center",
+              color: "muted",
+            },
+            {
+              type: "Button",
+              label: "Actualizar o cambiar cuenta",
+              onPressed: { event: "hdfull.login" },
+            },
+          ],
+        },
+      ],
+    },
+  };
 }
 
 export async function screenEvent(ev) {
   const e = typeof ev === "string" ? JSON.parse(ev) : ev || {};
   log(`screenEvent(ev="${e.name}")`);
+
   if (e.name === "hdfull.login") {
-    if (!kino?.visualBrowser?.available) return { view: unavailableView(), state:{ loginError:"visualBrowser_unavailable" } };
+    if (!kino?.visualBrowser?.available) {
+      return { view: unavailableView(), state: { loginError: "visualBrowser_unavailable" } };
+    }
     const result = await kino.visualBrowser.open({
-      url: LOGIN,
+      url: LOGIN_URL,
       title: "Iniciar sesión en HDFull",
       collect: {
-        cookies: ["PHPSESSID", "session", "remember", "remember_token", "XSRF-TOKEN"],
-        storeAs: { setting:"hdfullCookies", format:"header", thenEvent:"hdfull.loggedIn" },
-        finalUrl: true
+        cookies: [
+          "PHPSESSID",
+          "session",
+          "remember",
+          "remember_token",
+          "XSRF-TOKEN",
+          "cf_clearance",
+          "__cf_bm",
+          "login",
+          "user",
+          "token",
+        ],
+        storeAs: { setting: "hdfullCookies", format: "header", thenEvent: "hdfull.loggedIn" },
+        finalUrl: true,
       },
       userAgent: "browser",
-      timeoutMs: 600000
+      timeoutMs: 600000,
     });
-    if (result.status === "done" && result.stored) return { view: msg("Sesión guardada", "La sesión se guardó de forma cifrada. Actualizando HDFull..."), state:{loggedIn:true} };
-    if (result.status === "timeout") return { view: loginView(), message:"El inicio de sesión tardó demasiado. Inténtalo otra vez." };
+
+    if (result.status === "done" && result.stored) {
+      return {
+        view: await screen(),
+        state: { loggedIn: true },
+        message: "Sesión de HDFull guardada",
+      };
+    }
+    if (result.status === "timeout") {
+      return { view: loginView(), message: "El inicio de sesión tardó demasiado. Inténtalo otra vez." };
+    }
     return { view: loginView() };
   }
-  if (e.name === "hdfull.loggedIn") return { view: await screen(), state:{loggedIn:true}, message:"Sesión de HDFull vinculada" };
+
+  if (e.name === "hdfull.loggedIn") {
+    return { view: await screen(), state: { loggedIn: true }, message: "Sesión vinculada con éxito" };
+  }
+
   return null;
 }
 
-function requireLogin() { if (!signedIn()) { const e=new Error("Inicio de sesión requerido en HDFull"); e.code="auth_required"; throw e; } }
-export async function search() { requireLogin(); throw new Error("Catálogo pendiente de verificación tras login"); }
-export async function home() { requireLogin(); throw new Error("Catálogo pendiente de verificación tras login"); }
-export async function browse() { requireLogin(); throw new Error("Catálogo pendiente de verificación tras login"); }
-export async function episodes() { requireLogin(); throw new Error("Catálogo pendiente de verificación tras login"); }
-export async function resolve() { requireLogin(); throw new Error("Reproductor pendiente de verificación tras login"); }
+export async function home() {
+  log("home(): cargando catálogo");
+  if (!isAuthorized()) {
+    log("home(): no autorizado, sesión no iniciada");
+    return [];
+  }
+
+  try {
+    const [peliHtml, serieHtml] = await Promise.all([
+      fetchHtml("/peliculas-estreno").catch(() => fetchHtml("/peliculas/date/1")),
+      fetchHtml("/series-estreno").catch(() => fetchHtml("/series/date/1")),
+    ]);
+
+    const pelis = parseCards(peliHtml);
+    const series = parseCards(serieHtml);
+
+    return [
+      { id: "peliculas", title: "Películas en HDFull", ref: "peliculas", items: pelis },
+      { id: "series", title: "Series en HDFull", ref: "series", items: series },
+    ].filter(r => r.items.length > 0);
+  } catch (err) {
+    log(`home() error: ${err.message}`);
+    return [];
+  }
+}
+
+export async function browse(ref = "peliculas", cursor = "1") {
+  log(`browse(${ref}, ${cursor})`);
+  if (!isAuthorized()) return { items: [] };
+
+  const page = Number(cursor) || 1;
+  const isSeries = ref === "series" || ref.includes("/serie");
+  const path = isSeries ? `/series/date/${page}` : `/peliculas/date/${page}`;
+
+  try {
+    const html = await fetchHtml(path);
+    const items = parseCards(html);
+    return {
+      items,
+      next: items.length > 0 ? String(page + 1) : undefined,
+    };
+  } catch (err) {
+    log(`browse() error: ${err.message}`);
+    return { items: [] };
+  }
+}
+
+export async function search(arg) {
+  const q = typeof arg === "string" ? arg : (arg?.q || arg?.query || "");
+  if (!q.trim()) return { items: [] };
+  log(`search("${q}")`);
+
+  if (isAuthorized()) {
+    try {
+      const html = await fetchHtml(`/buscar?q=${encodeURIComponent(q)}`);
+      const items = parseCards(html);
+      if (items.length > 0) return { items };
+    } catch (err) {
+      log(`search() error: ${err.message}`);
+    }
+  }
+
+  return { items: [] };
+}
+
+export async function details(ref) {
+  log(`details(${ref})`);
+  let item = {
+    id: ref,
+    ref,
+    title: "",
+    overview: "",
+    poster: "",
+    kind: ref.includes("/serie/") ? "series" : "movie",
+    type: ref.includes("/serie/") ? "series" : "movie",
+  };
+
+  try {
+    const html = await fetchHtml(ref);
+    const ogTitle = html.match(/<meta[^>]+property=["']og:title["'][^>]+content=["']([^"']+)["']/i) ||
+                    html.match(/<title>([\s\S]*?)<\/title>/i);
+    const ogDesc = html.match(/<meta[^>]+property=["']og:description["'][^>]+content=["']([^"']+)["']/i);
+    const ogImage = html.match(/<meta[^>]+property=["']og:image["'][^>]+content=["']([^"']+)["']/i);
+
+    if (ogTitle) item.title = ogTitle[1].replace(/\s*-\s*HDFull.*$/i, "").trim();
+    if (ogDesc) item.overview = ogDesc[1].trim();
+    if (ogImage) item.poster = ogImage[1];
+
+    const yMatch = item.title.match(/\((\d{4})\)/);
+    if (yMatch) item.year = parseInt(yMatch[1], 10);
+  } catch (err) {
+    log(`details() fetch error: ${err.message}`);
+  }
+
+  try {
+    if (kino?.meta?.byTitle && item.title) {
+      const m = await kino.meta({ title: item.title, kind: item.kind, year: item.year });
+      if (m) item = { ...item, ...m, ids: m.ids || item.ids };
+    }
+  } catch (_) {}
+
+  return item;
+}
+
+export async function episodes(ref) {
+  log(`episodes(${ref})`);
+  const d = await details(ref);
+  const eps = [];
+
+  try {
+    const html = await fetchHtml(ref);
+    // Extract episodes links: <a href=".../temporada-X/episodio-Y" ...>
+    const matches = html.matchAll(/<a[^>]+href=["']([^"']*(?:\/temporada-(\d+)\/episodio-(\d+)[^"']*))["'][^>]*>([\s\S]*?)<\/a>/gi);
+    const seen = new Set();
+    for (const m of matches) {
+      const epUrl = m[1].startsWith("http") ? m[1] : `${BASE_URL}${m[1]}`;
+      if (seen.has(epUrl)) continue;
+      seen.add(epUrl);
+
+      const s = parseInt(m[2], 10);
+      const e = parseInt(m[3], 10);
+      const title = m[4].replace(/<[^>]*>/g, "").trim() || `Episodio ${e}`;
+
+      eps.push({
+        id: epUrl,
+        ref: epUrl,
+        title,
+        season: s,
+        episode: e,
+        kind: "episode",
+        type: "episode",
+        poster: d.poster,
+      });
+    }
+  } catch (err) {
+    log(`episodes() error: ${err.message}`);
+  }
+
+  return {
+    series: { title: d.title, ref },
+    episodes: eps,
+  };
+}
+
+export async function resolve(ref) {
+  log(`resolve(${ref})`);
+  const d = await details(ref).catch(() => ({ title: "" }));
+  const title = d.title || ref.split("/").filter(Boolean).pop() || "";
+
+  // 1. Try to extract direct embeds from the page if available
+  try {
+    const html = await fetchHtml(ref);
+    const iframes = [...html.matchAll(/<iframe[^>]+src=["']([^"']+)["']/gi)].map(m => m[1]);
+    for (const u of iframes) {
+      const streamMatch = u.match(/https?:[^"'\\s]+\.m3u8[^"'\\s]*/i);
+      if (streamMatch) {
+        return {
+          url: streamMatch[0],
+          mime: "application/x-mpegURL",
+          headers: { Referer: ref },
+        };
+      }
+    }
+  } catch (_) {}
+
+  // 2. High-speed multi-source fallback by title
+  if (title) {
+    log(`activando fallback para "${title}"...`);
+    const fb = await resolveFallback(title);
+    if (fb) {
+      log(`fallback resuelto con éxito: ${fb.url}`);
+      return fb;
+    }
+  }
+
+  throw new Error("No se pudo obtener un stream reproducible para este título en HDFull");
+}
