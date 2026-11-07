@@ -2,7 +2,7 @@ import { makeBrowse } from './browse/index.js';
 import { BASE_URL, getSessionCookie, isAuthorized, fetchHtml, parseCards } from "./hdfull.js";
 import { resolveFallback } from "./fallback.js";
 
-const VERSION = "1.0.3";
+const VERSION = "1.0.4";
 const PREFIX = `[HDFull v${VERSION}]`;
 const LOGIN_URL = `${BASE_URL}/login`;
 
@@ -111,7 +111,7 @@ export async function screenEvent(ev) {
     });
 
     if (result.status === "done" && result.stored) {
-      b = null; // Reiniciar instancia para cargar el catálogo fresco
+      b = null;
       return {
         view: await screen(),
         state: { loggedIn: true },
@@ -129,7 +129,6 @@ export async function screenEvent(ev) {
     return { view: await screen(), state: { loggedIn: true }, message: "Sesión vinculada con éxito" };
   }
 
-  // Si no es un evento de auth y hay sesión activa, delegar a la app de browse
   if (isAuthorized()) {
     return app().event(e);
   }
