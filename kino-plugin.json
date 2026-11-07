@@ -1,7 +1,7 @@
 {
   "id": "hdfull",
   "name": "HDFull",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "apiVersion": 20,
   "entry": "plugin.js",
   "icon": "icon.png",

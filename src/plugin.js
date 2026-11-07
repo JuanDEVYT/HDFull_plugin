@@ -1,12 +1,29 @@
+import { makeBrowse } from './browse/index.js';
 import { BASE_URL, getSessionCookie, isAuthorized, fetchHtml, parseCards } from "./hdfull.js";
 import { resolveFallback } from "./fallback.js";
 
-const VERSION = "1.0.1";
+const VERSION = "1.0.2";
 const PREFIX = `[HDFull v${VERSION}]`;
 const LOGIN_URL = `${BASE_URL}/login`;
 
 console.log(`${PREFIX} Creado por JuandreXter`);
 const log = (...x) => console.log(PREFIX, ...x);
+
+let b;
+function app() {
+  return b || (b = makeBrowse({
+    kino: typeof kino !== 'undefined' ? kino : null,
+    loadTab,
+    searchTitles: async q => (await search({ q })).items,
+  }));
+}
+
+async function loadTab(t) {
+  log(`loadTab("${t}")`);
+  if (t === 'inicio') return { rows: await home() };
+  const r = await browse(t, '1');
+  return { rows: [{ id: t, title: t === 'peliculas' ? 'Películas' : 'Series', ref: t, items: r.items }] };
+}
 
 function msg(title, body, action) {
   const children = [
@@ -56,43 +73,10 @@ function unavailableView() {
   );
 }
 
-export async function screen() {
+export async function screen(ctx) {
   log("screen(): comprobando sesión");
   if (!isAuthorized()) return loginView();
-
-  return {
-    type: "Scaffold",
-    appBar: {
-      type: "AppBar",
-      title: "HDFull",
-    },
-    body: {
-      type: "SingleChildScrollView",
-      padding: 24,
-      children: [
-        {
-          type: "Column",
-          crossAxisAlignment: "center",
-          gap: 16,
-          children: [
-            { type: "Icon", name: "check_circle", size: 48, color: "success" },
-            { type: "Text", text: "Sesión activa en HDFull", style: "h2", textAlign: "center" },
-            {
-              type: "Text",
-              text: "Tu cuenta está vinculada. Ya puedes explorar el catálogo desde la pantalla principal de Kino o usar la búsqueda.",
-              textAlign: "center",
-              color: "muted",
-            },
-            {
-              type: "Button",
-              label: "Actualizar o cambiar cuenta",
-              onPressed: { event: "hdfull.login" },
-            },
-          ],
-        },
-      ],
-    },
-  };
+  return app().view(ctx || {});
 }
 
 export async function screenEvent(ev) {
@@ -127,10 +111,11 @@ export async function screenEvent(ev) {
     });
 
     if (result.status === "done" && result.stored) {
+      b = null; // Reiniciar instancia para cargar el catálogo fresco
       return {
         view: await screen(),
         state: { loggedIn: true },
-        message: "Sesión de HDFull guardada",
+        message: "Sesión vinculada con éxito",
       };
     }
     if (result.status === "timeout") {
@@ -140,7 +125,13 @@ export async function screenEvent(ev) {
   }
 
   if (e.name === "hdfull.loggedIn") {
+    b = null;
     return { view: await screen(), state: { loggedIn: true }, message: "Sesión vinculada con éxito" };
+  }
+
+  // Si no es un evento de auth y hay sesión activa, delegar a la app de browse
+  if (isAuthorized()) {
+    return app().event(e);
   }
 
   return null;
@@ -257,7 +248,6 @@ export async function episodes(ref) {
 
   try {
     const html = await fetchHtml(ref);
-    // Extract episodes links: <a href=".../temporada-X/episodio-Y" ...>
     const matches = html.matchAll(/<a[^>]+href=["']([^"']*(?:\/temporada-(\d+)\/episodio-(\d+)[^"']*))["'][^>]*>([\s\S]*?)<\/a>/gi);
     const seen = new Set();
     for (const m of matches) {
@@ -295,7 +285,7 @@ export async function resolve(ref) {
   const d = await details(ref).catch(() => ({ title: "" }));
   const title = d.title || ref.split("/").filter(Boolean).pop() || "";
 
-  // 1. Try to extract direct embeds from the page if available
+  // 1. Extraer iframe directo si existe
   try {
     const html = await fetchHtml(ref);
     const iframes = [...html.matchAll(/<iframe[^>]+src=["']([^"']+)["']/gi)].map(m => m[1]);
@@ -311,7 +301,7 @@ export async function resolve(ref) {
     }
   } catch (_) {}
 
-  // 2. High-speed multi-source fallback by title
+  // 2. Fallback multi-fuente por título
   if (title) {
     log(`activando fallback para "${title}"...`);
     const fb = await resolveFallback(title);
